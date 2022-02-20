@@ -27,6 +27,7 @@ from perfkitbenchmarker import vm_util
 import six
 
 FLAGS = flags.FLAGS
+Tencent_PREFIX=['tencentyun']
 
 def GetDefaultImage():
     pass

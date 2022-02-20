@@ -28,11 +28,24 @@ from perfkitbenchmarker.providers.tencentcloud import tencentcloud_network
 from perfkitbenchmarker.providers.tencentcloud import util
 
 FLAGS = flags.FLAGS
+#???具体的参数不确定,看什么地方？
+#猜测是descride返回的东西
+T_STANDARD = 'pd-standard'
+T_REMOTE_SSD = 'CLOUD_HSSD'
+T_REMOTE_ESSD = 'CLOUD_HSSD'
+T_LOCAL= 'cloud_efficiency'
+T_PIOPS = 'pd-extreme'
 
-DISK_TYPE = {}
+DISK_TYPE = {
+  disk.STANDARD: T_STANDARD,
+  disk.REMOTE_SSD: T_REMOTE_SSD,
+  disk.PIOPS: T_PIOPS,
+  disk.LOCAL: T_LOCAL,
+  disk.REMOTE_ESSD: T_REMOTE_ESSD,
+}
 
 class TencentDisk(disk.BaseDisk):
-  """Object representing an AliCloud Disk."""
+  """Object representing an TencentCloud Disk."""
 
   _lock = threading.Lock()
   vm_devices = {}
@@ -40,21 +53,35 @@ class TencentDisk(disk.BaseDisk):
   def __init__(self, disk_spec, zone):
     super(TencentDisk, self).__init__(disk_spec)
     self.id = None
-    self.zone = zone
-    self.region = util.GetRegionByZone(self.zone)
+    self.Count= '1'
+    self.region = util.GetRegionFromZone(self.zone)#get还没补充完
     self.attached_vm_id = None
+    self.disk_type= 'CLOUD_HSSD'
+    self.disk_size= '500'
 
   def _Create(self):
     """Creates the disk."""
-    create_cmd = ''
-    create_cmd = util.GetEncodedCmd(create_cmd)
+    #查找cli命令用字符串输入腾讯云的接口命令
+    create_cmd = util.Tencent_PREFIX +[
+      'ecm',
+      'CreateDisk',
+      '--DiskType %s' % self.disk_type,
+      '--DiskCount %s' % self.Count,
+      '--DiskSize %s' % self.disk_size,
+      #'--DiskCategory %s' % DISK_TYPE[self.disk_type]
+    ]
+    create_cmd = util.TccliCommand(create_cmd)  #获取命令行工具得到的东西
     stdout, _, _ = vm_util.IssueCommand(create_cmd, raise_on_failure=False)
-    response = json.loads(stdout)
+    response = json.loads(stdout)   #解析返回地json数据
     self.id = response['DiskId']
 
   def _Delete(self):
     """Deletes the disk."""
-    delete_cmd = ''
+    #cmd
+    delete_cmd = util.Tencent_PREFIX + [
+        'ecm',
+        'TerminateDisks',
+        '--DiskId %s' % self.id]
     logging.info('Deleting Tencent Cloud disk %s. This may fail if the disk is not '
                  'yet detached, but will be retried.', self.id)
     delete_cmd = util.GetEncodedCmd(delete_cmd)
@@ -64,7 +91,7 @@ class TencentDisk(disk.BaseDisk):
     """Attaches the disk to a VM.
 
     Args:
-      vm: The AliVirtualMachine instance to which the disk will be attached.
+      vm: The TencentVirtualMachine instance to which the disk will be attached.
     """
     with self._lock:
       self.attached_vm_id = vm.id
@@ -74,13 +101,23 @@ class TencentDisk(disk.BaseDisk):
       self.device_letter = min(TencentDisk.vm_devices[self.attached_vm_id])
       TencentDisk.vm_devices[self.attached_vm_id].remove(self.device_letter)
 
-    attach_cmd = ''
+    attach_cmd = util.Tencent_PREFIX + [
+        'ecm',
+        'AttachDisks',
+        '--DiskId %s' % self.id,
+        '--InstanceId %s' % self.attached_vm_id,
+        '--Device %s' % self.GetVirtualDevicePath()]
     attach_cmd = util.GetEncodedCmd(attach_cmd)
     vm_util.IssueRetryableCommand(attach_cmd)
 
-  def Detach(self):
+  def Detach(self): #卸载主机上的云盘
     """Detaches the disk from a VM."""
-    detach_cmd = ''
+    #cmd
+    detach_cmd = util.Tencent_PREFIX + [
+      'ecm',
+      'DetachDisks',
+      '--InstanceId %s' % self.attached_vm_id,
+      '--DiskId %s' % self.id]
     detach_cmd = util.GetEncodedCmd(detach_cmd)
     vm_util.IssueRetryableCommand(detach_cmd)
 
@@ -103,7 +140,10 @@ class TencentDisk(disk.BaseDisk):
     """Waits until disk is attach to the instance"""
     logging.info('Waits until the disk\'s status is one of statuses: %s',
                  status_list)
-    describe_cmd = ''
+    #cmd
+    describe_cmd = util.Tencent_PREFIX + [
+        'ecm',
+        'DescribeDisks']
     attach_cmd = util.GetEncodedCmd(describe_cmd)
     stdout, _ = vm_util.IssueRetryableCommand(attach_cmd)
     response = json.loads(stdout)
